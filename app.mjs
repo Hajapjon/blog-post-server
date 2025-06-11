@@ -1,5 +1,7 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import postRouter from "./routes/post.mjs";
 
 const app = express();
 const port = process.env.PORT || 4001;
@@ -7,15 +9,12 @@ const port = process.env.PORT || 4001;
 app.use(cors());
 app.use(express.json());
 
-app.get("/profiles", (req, res) => {
-    return res.json({
-      data: {
-        name: "john",
-        age: 20,
-      },
-    });
-  });
-  
+app.use("/posts", postRouter);
+
+app.get("/", (req, res) => {
+  res.json({ message: "Server is running and Supabase is ready!" });
+});
+
 app.listen(port, () => {
-  console.log(`Server is running at ${port}`);
+  console.log(`🚀 Server is running on port ${port}`);
 });
