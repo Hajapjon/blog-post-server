@@ -1,5 +1,5 @@
 import { Router } from "express";
-import connectionPool from "../utils/db.mjs";
+import supabase from "../utils/supabaseClient.mjs";
 import { validateCreatePost } from "../middlewares/post.validation.mjs";
 
 const postRouter = Router();
@@ -10,31 +10,18 @@ postRouter.post("/", validateCreatePost, async (req, res) => {
     today.setHours(0, 0, 0, 0);
     const newPost = {
       ...req.body,
-      date: today,
+      date: today.toISOString(),
     };
 
-    const result = await connectionPool.query(
-      `
-            insert into posts (title, image, category_id, description, date, content, status_id)
-            values ($1, $2, $3, $4, $5, $6, $7)`,
-      [
-        newPost.title,
-        newPost.image,
-        newPost.category_id,
-        newPost.description,
-        newPost.date,
-        newPost.content,
-        newPost.status_id,
-      ]
-    );
-    if (result.rowCount > 0) {
-      return res.status(201).json({
-        message: "Created post sucessfully",
-      });
-    }
-  } catch {
+    const { error } = await supabase.from("posts").insert([newPost]);
+
+    if (error) throw error;
+
+    return res.status(201).json({ message: "Created post successfully" });
+  } catch (error) {
+    console.error("❌ Error:", error);
     return res.status(500).json({
-      message: "Server could not create post because database connection",
+      message: "Server could not create post because of database error",
     });
   }
 });
@@ -42,128 +29,99 @@ postRouter.post("/", validateCreatePost, async (req, res) => {
 postRouter.get("/", async (req, res) => {
   try {
     const { page = 1, limit = 6, category, keyword } = req.query;
-    const offset = (page - 1) * limit;
-    let conditions = [];
-    let values = [];
-    if (category) {
-      values.push(category);
-      conditions.push(`category_id = $${values.length}`);
-    }
+    const from = (page - 1) * limit;
+    const to = from + Number(limit) - 1;
 
-    if (keyword) {
-      values.push(`%${keyword}%`);
-      conditions.push(
-        `(title ILIKE $${values.length} OR description ILIKE $${values.length} OR content ILIKE $${values.length})`
-      );
-    }
+    let query = supabase
+      .from("posts_with_category") // ใช้ view หรือ join query ล่วงหน้าไว้ใน Supabase
+      .select("*")
+      .range(from, to)
+      .order("id", { ascending: false });
 
-    let whereClause =
-      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    if (category) query = query.eq("category", category);
+    if (keyword) query = query.ilike("title", `%${keyword}%`);
 
-    values.push(limit);
-    values.push(offset);
-    const result = await connectionPool.query(
-      `
-        SELECT * FROM posts
-        ${whereClause}
-        ORDER BY id DESC
-        LIMIT $${values.length - 1} OFFSET $${values.length}
-      `,
-      values
-    );
+    const { data, error } = await query;
+
+    if (error) throw error;
 
     return res.status(200).json({
       page: Number(page),
       limit: Number(limit),
-      data: result.rows,
+      data,
     });
   } catch (error) {
     console.error("❌ Error:", error);
     return res.status(500).json({
-      message: "Server could not read because database connection",
+      message: "Server could not fetch posts because of database error",
     });
   }
 });
 
 postRouter.get("/:postId", async (req, res) => {
   try {
-    const postId = req.params.postId;
-    const result = await connectionPool.query(
-      `select * from posts where id = $1`,
-      [postId]
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        message: "Server could not find a requested post",
-      });
-    }
+    const { postId } = req.params;
+    const { data, error } = await supabase
+      .from("posts_with_category")
+      .select("*")
+      .eq("id", postId)
+      .single();
 
-    return res.status(200).json({
-      data: result.rows[0],
-    });
-  } catch {
+    if (error) throw error;
+    if (!data)
+      return res.status(404).json({
+        message: "Post not found",
+      });
+
+    return res.status(200).json({ data });
+  } catch (error) {
+    console.error("❌ Error:", error);
     return res.status(500).json({
-      message: "Server could not read because database connection",
+      message: "Server could not fetch post because of database error",
     });
   }
 });
 
 postRouter.delete("/:postId", async (req, res) => {
   try {
-    const postId = req.params.postId;
-    const result = await connectionPool.query(
-      `delete from posts where id = $1`,
-      [postId]
-    );
-    if (result.rowCount === 0) {
-      return res.status(404).json({
-        message: "Server could not find a requested post to delete",
-      });
-    }
+    const { postId } = req.params;
+    const { error, count } = await supabase
+      .from("posts")
+      .delete()
+      .eq("id", postId);
 
-    return res.status(200).json({
-      message: "Deleted post sucessfully",
-    });
-  } catch {
+    if (error) throw error;
+    if (count === 0)
+      return res.status(404).json({ message: "Post not found to delete" });
+
+    return res.status(200).json({ message: "Deleted post successfully" });
+  } catch (error) {
+    console.error("❌ Error:", error);
     return res.status(500).json({
-      message: "Server could not read because database connection",
+      message: "Server could not delete post because of database error",
     });
   }
 });
 
 postRouter.put("/:postId", validateCreatePost, async (req, res) => {
   try {
-    const updatePost = {
-      ...req.body,
-    };
-    const postId = req.params.postId;
-    const result = await connectionPool.query(
-      `
-            update posts
-            set title = $2 , image = $3, category_id = $4, description = $5, content = $6, status_id = $7
-            where id = $1`,
-      [
-        postId,
-        updatePost.title,
-        updatePost.image,
-        updatePost.category_id,
-        updatePost.description,
-        updatePost.content,
-        updatePost.status_id,
-      ]
-    );
-    if (result.rowCount > 0) {
-      return res.status(200).json({
-        message: "Updated post sucessfully",
-      });
-    } else {
-      return res.status(404).json({
-        message: "Post not found to update",
-      });
-    }
-  } catch {
+    const { postId } = req.params;
+    const updatePost = req.body;
+
+    const { error, count } = await supabase
+      .from("posts")
+      .update(updatePost)
+      .eq("id", postId);
+
+    if (error) throw error;
+    if (count === 0)
+      return res.status(404).json({ message: "Post not found to update" });
+
+    return res.status(200).json({ message: "Updated post successfully" });
+  } catch (error) {
+    console.error("❌ Error:", error);
     return res.status(500).json({
-      message: "Server could not update post because database connection",
+      message: "Server could not update post because of database error",
     });
   }
 });
