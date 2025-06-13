@@ -20,8 +20,20 @@ authRouter.post("/signup", async (req, res) => {
     return res.status(400).json({ error: error.message });
   }
 
+  const userId = data.user.id;
+  const { email: userEmail } = data.user;
+
+  const { error: insertError } = await supabase
+    .from("users")
+    .insert([{ id: userId, email: userEmail, name, username }]);
+
+  if (insertError) {
+    return res.status(500).json({ error: insertError.message });
+  }
+
   return res.status(201).json({ user: data.user });
 });
+
 
 authRouter.post("/login", async (req, res) => {
   const { email, password } = req.body;
